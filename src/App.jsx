@@ -16,33 +16,36 @@ import {
   Crosshair,
   Hexagon,
   Info,
-  CircleDashed
+  CircleDashed,
+  X,
+  MapPinHouse
 } from 'lucide-react';
 
+// === Komponen Skeleton Loading ===
 const SkeletonForm = () => (
   <div className="animate-pulse space-y-4 w-full">
     <div className="h-4 bg-gray-200 rounded w-1/3 mx-auto mb-6"></div>
     <div className="h-14 bg-gray-100 border border-gray-200 rounded-xl w-full"></div>
     <div className="h-14 bg-gray-200 rounded-xl w-full mt-4"></div>
-    <div className="space-y-2 mt-6">
-      <div className="h-3 bg-gray-200 rounded w-full"></div>
-      <div className="h-3 bg-gray-200 rounded w-5/6"></div>
-    </div>
   </div>
 );
 
 export default function App() {
+  // States: Setup & Search
   const [appMode, setAppMode] = useState('setup');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [isTyping, setIsTyping] = useState(false);
   const [searchError, setSearchError] = useState(null);
   
+  // States: Geofencing Data
   const [targetData, setTargetData] = useState(null); 
   const [boundaryMode, setBoundaryMode] = useState('polygon'); // 'polygon' | 'radius'
   const [location, setLocation] = useState(null);
   const [isInside, setIsInside] = useState(null); 
   const [gpsStatus, setGpsStatus] = useState('Menunggu GPS...');
   
+  // Refs
   const mapRef = useRef(null);
   const mapContainerRef = useRef(null);
   const markerRef = useRef(null);
@@ -50,60 +53,68 @@ export default function App() {
   const boundaryLayerRef = useRef(null);
   const watchIdRef = useRef(null);
 
-  const RADIUS_ESTIMASI_METER = 2500; // 2.5 KM estimasi radius desa
+  const RADIUS_ESTIMASI_METER = 2500; // 2.5 KM estimasi untuk mode radius
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    
-    // Auto-Sanitizer: Membersihkan kata-kata yang membingungkan satelit OSM
-    let query = searchQuery.toLowerCase()
-      .replace(/kecamatan|kec\.|kec |desa |kelurahan |kabupaten|kab\.|kab /gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-      
-    if(!query) return;
+  // ==========================================
+  // LIVE AUTOCOMPLETE SEARCH (DEBOUNCED)
+  // ==========================================
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (searchQuery.trim().length >= 3) {
+        fetchSuggestions(searchQuery);
+      } else {
+        setSuggestions([]);
+        setSearchError(null);
+      }
+    }, 600); // 600ms delay agar tidak spam API saat mengetik
 
-    setIsSearching(true);
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery]);
+
+  const fetchSuggestions = async (query) => {
+    setIsTyping(true);
     setSearchError(null);
-
     try {
-      // Minta data geometri Polygon dan Point sekaligus
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&polygon_geojson=1&limit=5&addressdetails=1`;
+      // API dikunci khusus Indonesia (countrycodes=id)
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&countrycodes=id&format=json&polygon_geojson=1&limit=5&addressdetails=1`;
       const response = await fetch(url, { headers: { 'Accept-Language': 'id' } });
       const data = await response.json();
 
       if (data && data.length > 0) {
-        // 1. Cek apakah ada data Polygon (Area presisi)
-        const validPolygonResult = data.find(item => 
-          item.geojson && (item.geojson.type === 'Polygon' || item.geojson.type === 'MultiPolygon')
-        );
-
-        // 2. Jika tidak ada Polygon, cari data Titik (Pusat desa)
-        const validPointResult = data.find(item => 
-          item.geojson && item.geojson.type === 'Point'
-        );
-
-        if (validPolygonResult) {
-          setBoundaryMode('polygon');
-          setTargetData(validPolygonResult);
-          setAppMode('tracking'); 
-        } else if (validPointResult) {
-          setBoundaryMode('radius'); // Fallback ke mode Radius
-          setTargetData(validPointResult);
-          setAppMode('tracking');
-        } else {
-          setSearchError("Gagal memetakan wilayah. Pastikan ejaan lokasi Anda benar.");
-        }
+        setSuggestions(data);
       } else {
-        setSearchError("Wilayah tidak ditemukan di satelit. Coba kurangi detail (misal: Ranuwurung, Lumajang).");
+        setSuggestions([]);
+        setSearchError("Lokasi tidak ditemukan. Coba perbaiki ejaan Anda.");
       }
     } catch (error) {
-      setSearchError("Gagal terhubung ke satelit pemetaan. Periksa koneksi internet Anda.");
+      setSearchError("Koneksi terputus. Periksa jaringan internet Anda.");
     } finally {
-      setIsSearching(false);
+      setIsTyping(false);
     }
   };
 
+  const handleSelectLocation = (item) => {
+    setSearchQuery(item.display_name); // Set input text
+    setSuggestions([]); // Tutup dropdown
+    
+    // Cek apakah punya data Polygon (Area) atau Point (Titik)
+    if (item.geojson && (item.geojson.type === 'Polygon' || item.geojson.type === 'MultiPolygon')) {
+      setBoundaryMode('polygon');
+      setTargetData(item);
+      setAppMode('tracking');
+    } else if (item.geojson && item.geojson.type === 'Point') {
+      setBoundaryMode('radius'); // Fallback ke mode lingkaran 2.5KM
+      setTargetData(item);
+      setAppMode('tracking');
+    } else {
+      setSearchError("Data peta korup untuk lokasi ini. Silakan pilih lokasi lain.");
+    }
+  };
+
+
+  // ==========================================
+  // MAP INITIALIZATION (2D Standard Map)
+  // ==========================================
   useEffect(() => {
     if (appMode === 'tracking' && mapContainerRef.current && !mapRef.current) {
       initMap();
@@ -125,28 +136,29 @@ export default function App() {
       attributionControl: false 
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19
+    // MENGGUNAKAN PETA 2D STANDARD OSM (Sangat detail untuk pedesaan/jalan)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      opacity: 0.9 // Sedikit transparan agar UI menonjol
     }).addTo(mapRef.current);
 
     if (targetData && targetData.geojson) {
       if (boundaryMode === 'polygon') {
         const polygonStyle = {
-          color: '#F9A11B', 
-          weight: 3,
-          opacity: 0.9,
+          color: '#E11D48', // Merah mawar BPS untuk batas yang jelas di peta 2D
+          weight: 4,
+          opacity: 1,
           fillColor: '#005A9C', 
           fillOpacity: 0.15,
-          dashArray: '6, 6'
+          dashArray: '8, 6'
         };
         boundaryLayerRef.current = L.geoJSON(targetData.geojson, { style: polygonStyle }).addTo(mapRef.current);
-        mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [30, 30] });
+        mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [40, 40] });
       } 
       else if (boundaryMode === 'radius') {
-        // Draw 2.5km Circle Fallback
         const latLng = [targetData.lat, targetData.lon];
         boundaryLayerRef.current = L.circle(latLng, {
-          color: '#F9A11B',
+          color: '#E11D48',
           weight: 3,
           opacity: 0.9,
           fillColor: '#005A9C',
@@ -154,13 +166,13 @@ export default function App() {
           dashArray: '8, 8',
           radius: RADIUS_ESTIMASI_METER
         }).addTo(mapRef.current);
-        mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [30, 30] });
+        mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [40, 40] });
         
-        // Add center marker
+        // Marker pusat
         L.marker(latLng, {
           icon: L.divIcon({
             className: 'bg-transparent',
-            html: '<div class="w-4 h-4 bg-bps-orange rounded-full border-2 border-white shadow-md mx-auto mt-[-8px] ml-[-8px]"></div>',
+            html: '<div class="w-4 h-4 bg-rose-600 rounded-full border-2 border-white shadow-md mx-auto mt-[-8px] ml-[-8px]"></div>',
           })
         }).addTo(mapRef.current);
       }
@@ -205,7 +217,6 @@ export default function App() {
         const isPointInside = turf.booleanPointInPolygon(currentPoint, targetData.geojson);
         setIsInside(isPointInside);
       } else {
-        // Radius check fallback
         const centerPoint = turf.point([targetData.lon, targetData.lat]);
         const distanceKm = turf.distance(centerPoint, currentPoint, { units: 'kilometers' });
         setIsInside(distanceKm <= (RADIUS_ESTIMASI_METER / 1000));
@@ -230,9 +241,9 @@ export default function App() {
       markerRef.current = L.marker(latLng, { icon: customIcon }).addTo(mapRef.current);
       accuracyCircleRef.current = L.circle(latLng, {
         radius: loc.acc,
-        color: '#3b82f6',
-        fillColor: '#3b82f6',
-        fillOpacity: 0.1,
+        color: '#2563EB',
+        fillColor: '#2563EB',
+        fillOpacity: 0.15,
         weight: 1
       }).addTo(mapRef.current);
     } else {
@@ -262,99 +273,135 @@ export default function App() {
     }
     setAppMode('setup');
     setSearchQuery('');
+    setSuggestions([]);
     setTargetData(null);
     setLocation(null);
     setIsInside(null);
+    setSearchError(null);
   };
 
+
+  // ==========================================
+  // RENDER: SETUP MODE (AUTOCOMPLETE)
+  // ==========================================
   if (appMode === 'setup') {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-[#005A9C] to-[#003F6E] relative overflow-hidden select-none">
         <div className="absolute top-[-10%] left-[-10%] w-64 h-64 bg-white/10 rounded-full blur-3xl"></div>
         <div className="absolute bottom-[-10%] right-[-10%] w-80 h-80 bg-[#F9A11B]/20 rounded-full blur-3xl"></div>
 
-        <div className="w-full max-w-md bg-white rounded-[2rem] shadow-2xl p-8 relative z-10">
+        <div className="w-full max-w-md bg-white rounded-[2rem] shadow-2xl p-8 relative z-10 flex flex-col min-h-[450px]">
           <div className="text-center mb-8">
             <div className="w-16 h-16 bg-[#F0F6FA] rounded-2xl flex items-center justify-center mx-auto mb-4 text-[#005A9C] shadow-inner border border-blue-50">
               <MapIcon className="w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-bold text-gray-800">Geofence Batas Area</h1>
-            <p className="text-sm text-gray-500 mt-2 font-medium">Tetapkan wilayah tugas Anda sebelum turun ke lapangan.</p>
+            <h1 className="text-2xl font-bold text-gray-800">Geofence Wilayah</h1>
+            <p className="text-sm text-gray-500 mt-2 font-medium">Ketik nama desa atau kecamatan untuk mencari.</p>
           </div>
 
-          {isSearching ? (
-            <SkeletonForm />
-          ) : (
-            <form onSubmit={handleSearch} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-2 ml-1">Nama Wilayah Tujuan</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400">
-                    <Search className="w-5 h-5" />
-                  </div>
-                  <input 
-                    type="text" 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Contoh: Ranuwurung, Randuagung, Lumajang"
-                    className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#005A9C] focus:border-transparent transition-all placeholder-gray-400 text-sm font-medium"
-                    required
-                  />
-                </div>
-                
-                <div className="flex items-start gap-2 mt-3 ml-1">
-                   <Info className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
-                   <p className="text-[10px] text-gray-400 font-medium leading-relaxed">
-                     Ketik lengkap hingga Kabupaten untuk akurasi tinggi. Aplikasi pintar membersihkan kata "Kecamatan/Desa" otomatis.
-                   </p>
-                </div>
+          <div className="relative flex-1">
+            <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-2 ml-1">Cari Wilayah (Live)</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-gray-400">
+                <Search className="w-5 h-5" />
               </div>
-              
-              {searchError && (
-                <div className="bg-red-50 text-red-600 text-xs p-3 rounded-xl flex items-start gap-2 border border-red-100 shadow-sm mt-2">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                  <p className="font-medium leading-relaxed">{searchError}</p>
-                </div>
-              )}
+              <input 
+                type="text" 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Contoh: Ranuwurung"
+                className="w-full pl-12 pr-10 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#005A9C] focus:border-transparent transition-all placeholder-gray-400 text-sm font-medium"
+              />
+              {/* Tombol Clear / Loading Spinner */}
+              <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                {isTyping ? (
+                  <Loader2 className="w-5 h-5 text-[#005A9C] animate-spin" />
+                ) : searchQuery ? (
+                  <button onClick={() => setSearchQuery('')} className="text-gray-400 hover:text-gray-600 focus:outline-none">
+                    <X className="w-5 h-5" />
+                  </button>
+                ) : null}
+              </div>
+            </div>
 
-              <button 
-                type="submit" 
-                className="w-full bg-[#005A9C] text-white font-bold py-3.5 rounded-xl shadow-[0_8px_20px_rgba(0,90,156,0.3)] hover:bg-[#003F6E] transition-all flex justify-center items-center gap-2 mt-4"
-              >
-                <Satellite className="w-5 h-5" /> Kunci Wilayah Geofence
-              </button>
-            </form>
-          )}
+            {/* DROPDOWN SUGGESTIONS */}
+            {suggestions.length > 0 && (
+              <ul className="absolute z-50 w-full mt-2 bg-white border border-gray-100 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.15)] max-h-60 overflow-y-auto overflow-x-hidden divide-y divide-gray-50">
+                {suggestions.map((item, index) => {
+                  const parts = item.display_name.split(', ');
+                  const mainName = parts[0];
+                  const subName = parts.slice(1, 4).join(', '); // Ambil 3 level wilayah di atasnya
+
+                  return (
+                    <li 
+                      key={item.place_id || index} 
+                      onClick={() => handleSelectLocation(item)}
+                      className="p-3.5 hover:bg-blue-50 cursor-pointer transition-colors flex items-start gap-3 group"
+                    >
+                      <MapPinHouse className="w-5 h-5 text-gray-400 group-hover:text-[#005A9C] shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-sm font-bold text-gray-800 group-hover:text-[#005A9C]">{mainName}</h4>
+                        <p className="text-[11px] text-gray-500 line-clamp-1 mt-0.5">{subName}</p>
+                        
+                        {/* Indikator Punya Garis Batas atau Tidak */}
+                        <span className={`inline-block mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ${
+                          (item.geojson && item.geojson.type.includes('Polygon')) 
+                          ? 'bg-emerald-100 text-emerald-700' 
+                          : 'bg-yellow-100 text-yellow-700'
+                        }`}>
+                          {(item.geojson && item.geojson.type.includes('Polygon')) ? 'Peta Batas Tersedia' : 'Hanya Estimasi Titik'}
+                        </span>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+            
+            {/* Error Message */}
+            {searchError && !isTyping && (
+              <div className="bg-red-50 text-red-600 text-xs p-3 rounded-xl flex items-start gap-2 border border-red-100 shadow-sm mt-3">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <p className="font-medium leading-relaxed">{searchError}</p>
+              </div>
+            )}
+          </div>
           
           <div className="mt-8 pt-6 border-t border-gray-100 text-center">
-            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Sistem Deteksi Offline BPS</p>
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Database Peta: OpenStreetMap</p>
           </div>
         </div>
       </div>
     );
   }
 
+  // ==========================================
+  // RENDER: TRACKING MODE (PETA 2D)
+  // ==========================================
   const displayName = targetData?.name || targetData?.display_name?.split(',')[0] || "Wilayah Tugas";
+  const parentArea = targetData?.display_name?.split(', ')[1] || "";
   
   return (
-    <div className="relative w-full h-screen bg-gray-100 overflow-hidden select-none">
+    <div className="relative w-full h-screen bg-[#e5e5e5] overflow-hidden select-none">
       
       <style>{`
         .leaflet-control-attribution { display: none !important; }
-        .bg-bps-orange { background-color: #F9A11B; }
+        /* Mengubah filter warna peta menjadi sedikit lebih kontras jika diinginkan (opsional) */
+        .leaflet-tile-pane { filter: brightness(0.95) contrast(1.1); } 
+        
         .gps-marker-custom {
-          width: 22px; height: 22px;
-          background-color: #3b82f6;
+          width: 24px; height: 24px;
+          background-color: #2563EB;
           border: 4px solid white;
           border-radius: 50%;
-          box-shadow: 0 0 15px rgba(0,0,0,0.3);
+          box-shadow: 0 0 15px rgba(0,0,0,0.4);
           position: relative;
         }
         .gps-marker-custom::after {
           content: ''; position: absolute;
           top: -50%; left: -50%;
           width: 200%; height: 200%;
-          background-color: rgba(59, 130, 246, 0.4);
+          background-color: rgba(37, 99, 235, 0.4);
           border-radius: 50%;
           animation: gps-pulse 1.5s infinite ease-in-out;
         }
@@ -377,17 +424,16 @@ export default function App() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="text-center flex-1 px-2 overflow-hidden">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-0.5">Target Operasi</p>
-              <h2 className="text-sm font-bold text-gray-800 truncate">{displayName}</h2>
+              <h2 className="text-[15px] font-bold text-gray-800 truncate">{displayName}</h2>
+              {parentArea && <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{parentArea}</p>}
             </div>
             <div className="w-10 h-10 flex items-center justify-center text-[#005A9C]">
               <ShieldCheck className="w-6 h-6" />
             </div>
           </div>
           
-          {/* Dynamic Badge for Boundary Type */}
           {boundaryMode === 'radius' && (
-            <div className="mx-auto mt-2 bg-yellow-100/90 backdrop-blur-sm border border-yellow-200 text-yellow-800 text-[10px] font-bold px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 shadow-sm absolute left-1/2 -translate-x-1/2 whitespace-nowrap">
+            <div className="mx-auto mt-2 bg-yellow-100/95 backdrop-blur-sm border border-yellow-200 text-yellow-800 text-[10px] font-bold px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 shadow-sm absolute left-1/2 -translate-x-1/2 whitespace-nowrap">
                <CircleDashed className="w-3 h-3" /> Area Estimasi (Radius 2.5 KM)
             </div>
           )}
@@ -396,7 +442,7 @@ export default function App() {
         <div className="absolute bottom-[240px] right-4 flex flex-col gap-3 pointer-events-auto">
           <button 
             onClick={centerToArea}
-            className="w-12 h-12 bg-white rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] flex items-center justify-center text-[#F9A11B] hover:bg-gray-50 focus:outline-none"
+            className="w-12 h-12 bg-white rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.2)] flex items-center justify-center text-[#E11D48] hover:bg-gray-50 focus:outline-none"
             title="Lihat Seluruh Area Target"
           >
             <Hexagon className="w-6 h-6" />
