@@ -17,11 +17,9 @@ import {
   Hexagon,
   Info,
   CircleDashed,
-  X,
-  MapPinHouse
+  X
 } from 'lucide-react';
 
-// === Komponen Skeleton Loading ===
 const SkeletonForm = () => (
   <div className="animate-pulse space-y-4 w-full">
     <div className="h-4 bg-gray-200 rounded w-1/3 mx-auto mb-6"></div>
@@ -31,21 +29,18 @@ const SkeletonForm = () => (
 );
 
 export default function App() {
-  // States: Setup & Search
   const [appMode, setAppMode] = useState('setup');
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
   const [searchError, setSearchError] = useState(null);
   
-  // States: Geofencing Data
   const [targetData, setTargetData] = useState(null); 
-  const [boundaryMode, setBoundaryMode] = useState('polygon'); // 'polygon' | 'radius'
+  const [boundaryMode, setBoundaryMode] = useState('polygon'); 
   const [location, setLocation] = useState(null);
   const [isInside, setIsInside] = useState(null); 
   const [gpsStatus, setGpsStatus] = useState('Menunggu GPS...');
   
-  // Refs
   const mapRef = useRef(null);
   const mapContainerRef = useRef(null);
   const markerRef = useRef(null);
@@ -53,11 +48,8 @@ export default function App() {
   const boundaryLayerRef = useRef(null);
   const watchIdRef = useRef(null);
 
-  const RADIUS_ESTIMASI_METER = 2500; // 2.5 KM estimasi untuk mode radius
+  const RADIUS_ESTIMASI_METER = 2500; 
 
-  // ==========================================
-  // LIVE AUTOCOMPLETE SEARCH (DEBOUNCED)
-  // ==========================================
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
       if (searchQuery.trim().length >= 3) {
@@ -66,7 +58,7 @@ export default function App() {
         setSuggestions([]);
         setSearchError(null);
       }
-    }, 600); // 600ms delay agar tidak spam API saat mengetik
+    }, 600); 
 
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery]);
@@ -75,7 +67,6 @@ export default function App() {
     setIsTyping(true);
     setSearchError(null);
     try {
-      // API dikunci khusus Indonesia (countrycodes=id)
       const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&countrycodes=id&format=json&polygon_geojson=1&limit=5&addressdetails=1`;
       const response = await fetch(url, { headers: { 'Accept-Language': 'id' } });
       const data = await response.json();
@@ -94,16 +85,15 @@ export default function App() {
   };
 
   const handleSelectLocation = (item) => {
-    setSearchQuery(item.display_name); // Set input text
-    setSuggestions([]); // Tutup dropdown
+    setSearchQuery(item.display_name); 
+    setSuggestions([]); 
     
-    // Cek apakah punya data Polygon (Area) atau Point (Titik)
     if (item.geojson && (item.geojson.type === 'Polygon' || item.geojson.type === 'MultiPolygon')) {
       setBoundaryMode('polygon');
       setTargetData(item);
       setAppMode('tracking');
     } else if (item.geojson && item.geojson.type === 'Point') {
-      setBoundaryMode('radius'); // Fallback ke mode lingkaran 2.5KM
+      setBoundaryMode('radius'); 
       setTargetData(item);
       setAppMode('tracking');
     } else {
@@ -111,10 +101,6 @@ export default function App() {
     }
   };
 
-
-  // ==========================================
-  // MAP INITIALIZATION (2D Standard Map)
-  // ==========================================
   useEffect(() => {
     if (appMode === 'tracking' && mapContainerRef.current && !mapRef.current) {
       initMap();
@@ -136,16 +122,15 @@ export default function App() {
       attributionControl: false 
     });
 
-    // MENGGUNAKAN PETA 2D STANDARD OSM (Sangat detail untuk pedesaan/jalan)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      opacity: 0.9 // Sedikit transparan agar UI menonjol
+      opacity: 0.9 
     }).addTo(mapRef.current);
 
     if (targetData && targetData.geojson) {
       if (boundaryMode === 'polygon') {
         const polygonStyle = {
-          color: '#E11D48', // Merah mawar BPS untuk batas yang jelas di peta 2D
+          color: '#E11D48', 
           weight: 4,
           opacity: 1,
           fillColor: '#005A9C', 
@@ -168,7 +153,6 @@ export default function App() {
         }).addTo(mapRef.current);
         mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [40, 40] });
         
-        // Marker pusat
         L.marker(latLng, {
           icon: L.divIcon({
             className: 'bg-transparent',
@@ -280,10 +264,6 @@ export default function App() {
     setSearchError(null);
   };
 
-
-  // ==========================================
-  // RENDER: SETUP MODE (AUTOCOMPLETE)
-  // ==========================================
   if (appMode === 'setup') {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-[#005A9C] to-[#003F6E] relative overflow-hidden select-none">
@@ -312,7 +292,6 @@ export default function App() {
                 placeholder="Contoh: Ranuwurung"
                 className="w-full pl-12 pr-10 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#005A9C] focus:border-transparent transition-all placeholder-gray-400 text-sm font-medium"
               />
-              {/* Tombol Clear / Loading Spinner */}
               <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
                 {isTyping ? (
                   <Loader2 className="w-5 h-5 text-[#005A9C] animate-spin" />
@@ -324,13 +303,12 @@ export default function App() {
               </div>
             </div>
 
-            {/* DROPDOWN SUGGESTIONS */}
             {suggestions.length > 0 && (
               <ul className="absolute z-50 w-full mt-2 bg-white border border-gray-100 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.15)] max-h-60 overflow-y-auto overflow-x-hidden divide-y divide-gray-50">
                 {suggestions.map((item, index) => {
                   const parts = item.display_name.split(', ');
                   const mainName = parts[0];
-                  const subName = parts.slice(1, 4).join(', '); // Ambil 3 level wilayah di atasnya
+                  const subName = parts.slice(1, 4).join(', '); 
 
                   return (
                     <li 
@@ -338,12 +316,12 @@ export default function App() {
                       onClick={() => handleSelectLocation(item)}
                       className="p-3.5 hover:bg-blue-50 cursor-pointer transition-colors flex items-start gap-3 group"
                     >
-                      <MapPinHouse className="w-5 h-5 text-gray-400 group-hover:text-[#005A9C] shrink-0 mt-0.5" />
+                      {/* Diubah menjadi MapPin biasa yang dijamin ada di semua versi */}
+                      <MapPin className="w-5 h-5 text-gray-400 group-hover:text-[#005A9C] shrink-0 mt-0.5" />
                       <div>
                         <h4 className="text-sm font-bold text-gray-800 group-hover:text-[#005A9C]">{mainName}</h4>
                         <p className="text-[11px] text-gray-500 line-clamp-1 mt-0.5">{subName}</p>
                         
-                        {/* Indikator Punya Garis Batas atau Tidak */}
                         <span className={`inline-block mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-sm uppercase tracking-wider ${
                           (item.geojson && item.geojson.type.includes('Polygon')) 
                           ? 'bg-emerald-100 text-emerald-700' 
@@ -358,7 +336,6 @@ export default function App() {
               </ul>
             )}
             
-            {/* Error Message */}
             {searchError && !isTyping && (
               <div className="bg-red-50 text-red-600 text-xs p-3 rounded-xl flex items-start gap-2 border border-red-100 shadow-sm mt-3">
                 <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -375,9 +352,6 @@ export default function App() {
     );
   }
 
-  // ==========================================
-  // RENDER: TRACKING MODE (PETA 2D)
-  // ==========================================
   const displayName = targetData?.name || targetData?.display_name?.split(',')[0] || "Wilayah Tugas";
   const parentArea = targetData?.display_name?.split(', ')[1] || "";
   
@@ -386,7 +360,6 @@ export default function App() {
       
       <style>{`
         .leaflet-control-attribution { display: none !important; }
-        /* Mengubah filter warna peta menjadi sedikit lebih kontras jika diinginkan (opsional) */
         .leaflet-tile-pane { filter: brightness(0.95) contrast(1.1); } 
         
         .gps-marker-custom {
@@ -479,8 +452,8 @@ export default function App() {
               </p>
               <h3 className={`text-[19px] font-bold leading-tight ${
                 isInside === null ? 'text-gray-700' :
-                isInside === true ? 'text-emerald-700' : 
-                'text-red-700'
+                isInside === true ? (boundaryMode === 'radius' ? 'Di Dalam Estimasi' : 'Di Dalam Batas') : 
+                'Di Luar Area'
               }`}>
                 {isInside === null ? 'Menghitung...' : 
                  isInside === true ? (boundaryMode === 'radius' ? 'Di Dalam Estimasi' : 'Di Dalam Batas') : 
