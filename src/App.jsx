@@ -4,19 +4,19 @@ import 'leaflet/dist/leaflet.css';
 import * as turf from '@turf/turf';
 import { 
   MapPin, 
-  Target, 
   ShieldCheck, 
   CheckCircle2, 
   AlertTriangle, 
   ArrowLeft, 
   Satellite, 
   Radio, 
-  Map, 
+  Map as MapIcon, 
   Search,
   Loader2,
   Crosshair,
   Hexagon,
-  Info
+  Info,
+  CircleDashed
 } from 'lucide-react';
 
 const SkeletonForm = () => (
@@ -38,45 +38,64 @@ export default function App() {
   const [searchError, setSearchError] = useState(null);
   
   const [targetData, setTargetData] = useState(null); 
+  const [boundaryMode, setBoundaryMode] = useState('polygon'); // 'polygon' | 'radius'
   const [location, setLocation] = useState(null);
   const [isInside, setIsInside] = useState(null); 
-  const [gpsStatus, setGpsStatus] = useState('Inisialisasi GPS...');
+  const [gpsStatus, setGpsStatus] = useState('Menunggu GPS...');
   
   const mapRef = useRef(null);
   const mapContainerRef = useRef(null);
   const markerRef = useRef(null);
   const accuracyCircleRef = useRef(null);
-  const polygonLayerRef = useRef(null);
+  const boundaryLayerRef = useRef(null);
   const watchIdRef = useRef(null);
+
+  const RADIUS_ESTIMASI_METER = 2500; // 2.5 KM estimasi radius desa
 
   const handleSearch = async (e) => {
     e.preventDefault();
-    const query = searchQuery.trim();
+    
+    // Auto-Sanitizer: Membersihkan kata-kata yang membingungkan satelit OSM
+    let query = searchQuery.toLowerCase()
+      .replace(/kecamatan|kec\.|kec |desa |kelurahan |kabupaten|kab\.|kab /gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+      
     if(!query) return;
 
     setIsSearching(true);
     setSearchError(null);
 
     try {
-      // PERUBAHAN MAJOR: Ambil 10 hasil, bukan cuma 1 (limit=10)
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&polygon_geojson=1&limit=10&addressdetails=1`;
+      // Minta data geometri Polygon dan Point sekaligus
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&polygon_geojson=1&limit=5&addressdetails=1`;
       const response = await fetch(url, { headers: { 'Accept-Language': 'id' } });
       const data = await response.json();
 
       if (data && data.length > 0) {
-        // ALGORITMA CERDAS: Cari hasil pertama yang MERUPAKAN POLIGON, abaikan hasil bertipe Point (Titik)
+        // 1. Cek apakah ada data Polygon (Area presisi)
         const validPolygonResult = data.find(item => 
           item.geojson && (item.geojson.type === 'Polygon' || item.geojson.type === 'MultiPolygon')
         );
 
+        // 2. Jika tidak ada Polygon, cari data Titik (Pusat desa)
+        const validPointResult = data.find(item => 
+          item.geojson && item.geojson.type === 'Point'
+        );
+
         if (validPolygonResult) {
+          setBoundaryMode('polygon');
           setTargetData(validPolygonResult);
           setAppMode('tracking'); 
+        } else if (validPointResult) {
+          setBoundaryMode('radius'); // Fallback ke mode Radius
+          setTargetData(validPointResult);
+          setAppMode('tracking');
         } else {
-          setSearchError("Lokasi ditemukan, tapi satelit belum memiliki data 'Garis Batas' untuk area ini. Coba area di atasnya (misal: nama Kecamatan).");
+          setSearchError("Gagal memetakan wilayah. Pastikan ejaan lokasi Anda benar.");
         }
       } else {
-        setSearchError("Wilayah tidak ditemukan. Tips: Coba kurangi kata (Misal cukup ketik: 'Ranuwurung, Lumajang' tanpa kecamatan).");
+        setSearchError("Wilayah tidak ditemukan di satelit. Coba kurangi detail (misal: Ranuwurung, Lumajang).");
       }
     } catch (error) {
       setSearchError("Gagal terhubung ke satelit pemetaan. Periksa koneksi internet Anda.");
@@ -104,29 +123,47 @@ export default function App() {
     mapRef.current = L.map(mapContainerRef.current, { 
       zoomControl: false,
       attributionControl: false 
-    }).setView([-0.789275, 113.921327], 5);
+    });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       maxZoom: 19
     }).addTo(mapRef.current);
 
     if (targetData && targetData.geojson) {
-      const polygonStyle = {
-        color: '#F9A11B', 
-        weight: 3,
-        opacity: 0.9,
-        fillColor: '#005A9C', 
-        fillOpacity: 0.15,
-        dashArray: '6, 6'
-      };
-
-      polygonLayerRef.current = L.geoJSON(targetData.geojson, { style: polygonStyle }).addTo(mapRef.current);
-      
-      setTimeout(() => {
-        if(mapRef.current && polygonLayerRef.current) {
-          mapRef.current.fitBounds(polygonLayerRef.current.getBounds(), { padding: [30, 30] });
-        }
-      }, 100);
+      if (boundaryMode === 'polygon') {
+        const polygonStyle = {
+          color: '#F9A11B', 
+          weight: 3,
+          opacity: 0.9,
+          fillColor: '#005A9C', 
+          fillOpacity: 0.15,
+          dashArray: '6, 6'
+        };
+        boundaryLayerRef.current = L.geoJSON(targetData.geojson, { style: polygonStyle }).addTo(mapRef.current);
+        mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [30, 30] });
+      } 
+      else if (boundaryMode === 'radius') {
+        // Draw 2.5km Circle Fallback
+        const latLng = [targetData.lat, targetData.lon];
+        boundaryLayerRef.current = L.circle(latLng, {
+          color: '#F9A11B',
+          weight: 3,
+          opacity: 0.9,
+          fillColor: '#005A9C',
+          fillOpacity: 0.1,
+          dashArray: '8, 8',
+          radius: RADIUS_ESTIMASI_METER
+        }).addTo(mapRef.current);
+        mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [30, 30] });
+        
+        // Add center marker
+        L.marker(latLng, {
+          icon: L.divIcon({
+            className: 'bg-transparent',
+            html: '<div class="w-4 h-4 bg-bps-orange rounded-full border-2 border-white shadow-md mx-auto mt-[-8px] ml-[-8px]"></div>',
+          })
+        }).addTo(mapRef.current);
+      }
     }
   };
 
@@ -163,10 +200,18 @@ export default function App() {
 
     try {
       const currentPoint = turf.point([lng, lat]);
-      const isPointInside = turf.booleanPointInPolygon(currentPoint, targetData.geojson);
-      setIsInside(isPointInside);
+      
+      if (boundaryMode === 'polygon') {
+        const isPointInside = turf.booleanPointInPolygon(currentPoint, targetData.geojson);
+        setIsInside(isPointInside);
+      } else {
+        // Radius check fallback
+        const centerPoint = turf.point([targetData.lon, targetData.lat]);
+        const distanceKm = turf.distance(centerPoint, currentPoint, { units: 'kilometers' });
+        setIsInside(distanceKm <= (RADIUS_ESTIMASI_METER / 1000));
+      }
     } catch (e) {
-      console.error("Geofence calculation error:", e);
+      console.error("Geofence error:", e);
     }
   };
 
@@ -198,8 +243,8 @@ export default function App() {
   };
 
   const centerToArea = () => {
-    if(mapRef.current && polygonLayerRef.current) {
-      mapRef.current.fitBounds(polygonLayerRef.current.getBounds(), { padding: [30, 30] });
+    if(mapRef.current && boundaryLayerRef.current) {
+      mapRef.current.fitBounds(boundaryLayerRef.current.getBounds(), { padding: [30, 30] });
     }
   };
 
@@ -231,7 +276,7 @@ export default function App() {
         <div className="w-full max-w-md bg-white rounded-[2rem] shadow-2xl p-8 relative z-10">
           <div className="text-center mb-8">
             <div className="w-16 h-16 bg-[#F0F6FA] rounded-2xl flex items-center justify-center mx-auto mb-4 text-[#005A9C] shadow-inner border border-blue-50">
-              <Map className="w-8 h-8" />
+              <MapIcon className="w-8 h-8" />
             </div>
             <h1 className="text-2xl font-bold text-gray-800">Geofence Batas Area</h1>
             <p className="text-sm text-gray-500 mt-2 font-medium">Tetapkan wilayah tugas Anda sebelum turun ke lapangan.</p>
@@ -251,17 +296,16 @@ export default function App() {
                     type="text" 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Contoh: Ranuwurung, Lumajang"
+                    placeholder="Contoh: Ranuwurung, Randuagung, Lumajang"
                     className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#005A9C] focus:border-transparent transition-all placeholder-gray-400 text-sm font-medium"
                     required
                   />
                 </div>
                 
-                {/* Tambahan Info UI yang Elegan */}
                 <div className="flex items-start gap-2 mt-3 ml-1">
                    <Info className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
                    <p className="text-[10px] text-gray-400 font-medium leading-relaxed">
-                     Tips: Jika tidak ditemukan, persingkat nama. Cukup ketik <span className="font-bold text-gray-600">Nama Desa</span> koma <span className="font-bold text-gray-600">Nama Kabupaten</span>.
+                     Ketik lengkap hingga Kabupaten untuk akurasi tinggi. Aplikasi pintar membersihkan kata "Kecamatan/Desa" otomatis.
                    </p>
                 </div>
               </div>
@@ -277,7 +321,7 @@ export default function App() {
                 type="submit" 
                 className="w-full bg-[#005A9C] text-white font-bold py-3.5 rounded-xl shadow-[0_8px_20px_rgba(0,90,156,0.3)] hover:bg-[#003F6E] transition-all flex justify-center items-center gap-2 mt-4"
               >
-                <Satellite className="w-5 h-5" /> Unduh Batas Wilayah
+                <Satellite className="w-5 h-5" /> Kunci Wilayah Geofence
               </button>
             </form>
           )}
@@ -290,13 +334,14 @@ export default function App() {
     );
   }
 
-  const displayName = targetData?.address?.village || targetData?.address?.suburb || targetData?.address?.town || targetData?.name || "Wilayah Tugas";
+  const displayName = targetData?.name || targetData?.display_name?.split(',')[0] || "Wilayah Tugas";
   
   return (
     <div className="relative w-full h-screen bg-gray-100 overflow-hidden select-none">
       
       <style>{`
         .leaflet-control-attribution { display: none !important; }
+        .bg-bps-orange { background-color: #F9A11B; }
         .gps-marker-custom {
           width: 22px; height: 22px;
           background-color: #3b82f6;
@@ -323,7 +368,7 @@ export default function App() {
 
       <div className="absolute inset-0 w-full h-full pointer-events-none z-10 flex flex-col justify-between">
         <div className="p-4 pointer-events-auto">
-          <div className="bg-white/90 backdrop-blur-md shadow-sm rounded-2xl p-3 flex items-center justify-between border border-white/50">
+          <div className="bg-white/95 backdrop-blur-md shadow-sm rounded-2xl p-3 flex items-center justify-between border border-white/50">
             <button 
               onClick={resetApp}
               className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 hover:bg-red-50 hover:text-red-500 transition-colors"
@@ -339,6 +384,13 @@ export default function App() {
               <ShieldCheck className="w-6 h-6" />
             </div>
           </div>
+          
+          {/* Dynamic Badge for Boundary Type */}
+          {boundaryMode === 'radius' && (
+            <div className="mx-auto mt-2 bg-yellow-100/90 backdrop-blur-sm border border-yellow-200 text-yellow-800 text-[10px] font-bold px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 shadow-sm absolute left-1/2 -translate-x-1/2 whitespace-nowrap">
+               <CircleDashed className="w-3 h-3" /> Area Estimasi (Radius 2.5 KM)
+            </div>
+          )}
         </div>
 
         <div className="absolute bottom-[240px] right-4 flex flex-col gap-3 pointer-events-auto">
@@ -385,8 +437,8 @@ export default function App() {
                 'text-red-700'
               }`}>
                 {isInside === null ? 'Menghitung...' : 
-                 isInside === true ? 'Di Dalam Batas' : 
-                 'Di Luar Batas'}
+                 isInside === true ? (boundaryMode === 'radius' ? 'Di Dalam Estimasi' : 'Di Dalam Batas') : 
+                 'Di Luar Area'}
               </h3>
             </div>
           </div>
@@ -417,6 +469,5 @@ export default function App() {
     </div>
   );
 }
-
 
 
