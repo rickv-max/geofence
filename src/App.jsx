@@ -15,7 +15,8 @@ import {
   Search,
   Loader2,
   Crosshair,
-  Hexagon
+  Hexagon,
+  Info
 } from 'lucide-react';
 
 const SkeletonForm = () => (
@@ -50,29 +51,35 @@ export default function App() {
 
   const handleSearch = async (e) => {
     e.preventDefault();
-    if(!searchQuery.trim()) return;
+    const query = searchQuery.trim();
+    if(!query) return;
 
     setIsSearching(true);
     setSearchError(null);
 
     try {
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchQuery)}&format=json&polygon_geojson=1&limit=1&addressdetails=1`;
+      // PERUBAHAN MAJOR: Ambil 10 hasil, bukan cuma 1 (limit=10)
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&polygon_geojson=1&limit=10&addressdetails=1`;
       const response = await fetch(url, { headers: { 'Accept-Language': 'id' } });
       const data = await response.json();
 
       if (data && data.length > 0) {
-        const result = data[0];
-        if (result.geojson && (result.geojson.type === 'Polygon' || result.geojson.type === 'MultiPolygon')) {
-          setTargetData(result);
+        // ALGORITMA CERDAS: Cari hasil pertama yang MERUPAKAN POLIGON, abaikan hasil bertipe Point (Titik)
+        const validPolygonResult = data.find(item => 
+          item.geojson && (item.geojson.type === 'Polygon' || item.geojson.type === 'MultiPolygon')
+        );
+
+        if (validPolygonResult) {
+          setTargetData(validPolygonResult);
           setAppMode('tracking'); 
         } else {
-          setSearchError("Peta batas (Poligon) belum tersedia di OpenStreetMap. Coba tingkat lebih luas (Kecamatan).");
+          setSearchError("Lokasi ditemukan, tapi satelit belum memiliki data 'Garis Batas' untuk area ini. Coba area di atasnya (misal: nama Kecamatan).");
         }
       } else {
-        setSearchError("Wilayah tidak ditemukan. Pastikan ejaan benar (Contoh: Ranuwurung, Randuagung).");
+        setSearchError("Wilayah tidak ditemukan. Tips: Coba kurangi kata (Misal cukup ketik: 'Ranuwurung, Lumajang' tanpa kecamatan).");
       }
     } catch (error) {
-      setSearchError("Gagal terhubung ke server peta. Periksa koneksi internet Anda.");
+      setSearchError("Gagal terhubung ke satelit pemetaan. Periksa koneksi internet Anda.");
     } finally {
       setIsSearching(false);
     }
@@ -233,7 +240,7 @@ export default function App() {
           {isSearching ? (
             <SkeletonForm />
           ) : (
-            <form onSubmit={handleSearch} className="space-y-5">
+            <form onSubmit={handleSearch} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-600 uppercase tracking-wide mb-2 ml-1">Nama Wilayah Tujuan</label>
                 <div className="relative">
@@ -244,15 +251,23 @@ export default function App() {
                     type="text" 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Contoh: Ranuwurung, Randuagung"
+                    placeholder="Contoh: Ranuwurung, Lumajang"
                     className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#005A9C] focus:border-transparent transition-all placeholder-gray-400 text-sm font-medium"
                     required
                   />
                 </div>
+                
+                {/* Tambahan Info UI yang Elegan */}
+                <div className="flex items-start gap-2 mt-3 ml-1">
+                   <Info className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+                   <p className="text-[10px] text-gray-400 font-medium leading-relaxed">
+                     Tips: Jika tidak ditemukan, persingkat nama. Cukup ketik <span className="font-bold text-gray-600">Nama Desa</span> koma <span className="font-bold text-gray-600">Nama Kabupaten</span>.
+                   </p>
+                </div>
               </div>
               
               {searchError && (
-                <div className="bg-red-50 text-red-600 text-xs p-3 rounded-lg flex items-start gap-2 border border-red-100">
+                <div className="bg-red-50 text-red-600 text-xs p-3 rounded-xl flex items-start gap-2 border border-red-100 shadow-sm mt-2">
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   <p className="font-medium leading-relaxed">{searchError}</p>
                 </div>
@@ -260,7 +275,7 @@ export default function App() {
 
               <button 
                 type="submit" 
-                className="w-full bg-[#005A9C] text-white font-bold py-3.5 rounded-xl shadow-[0_8px_20px_rgba(0,90,156,0.3)] hover:bg-[#003F6E] transition-all flex justify-center items-center gap-2"
+                className="w-full bg-[#005A9C] text-white font-bold py-3.5 rounded-xl shadow-[0_8px_20px_rgba(0,90,156,0.3)] hover:bg-[#003F6E] transition-all flex justify-center items-center gap-2 mt-4"
               >
                 <Satellite className="w-5 h-5" /> Unduh Batas Wilayah
               </button>
@@ -402,4 +417,6 @@ export default function App() {
     </div>
   );
 }
+
+
 
