@@ -1,5 +1,5 @@
 {
-  "name": "geofence",
+  "name": "geobatas-pro",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -9,11 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@turf/turf": "^6.5.0",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^0.378.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "lucide-react": "^0.360.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.38",
